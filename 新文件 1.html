@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3x3 數字推盤遊戲 - 紀錄挑戰版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        :root {
+            --bg-color: #f8fafc;
+            --tile-color: #ffffff;
+            --empty-color: #cbd5e1;
+            --accent-color: #6366f1;
+            --text-color: #1e293b;
+            --tile-size: 90px;
+            --gap: 12px;
+            --container-size: 318px;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            font-family: 'PingFang TC', 'Heiti TC', 'Microsoft JhengHei', sans-serif;
+        }
+
+        /* 煙火畫布維持在最頂層 z-index: 200 */
+        #fireworks-canvas {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 200; 
+        }
+
+        .puzzle-container {
+            position: relative;
+            background-color: #64748b;
+            border-radius: 16px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.15);
+            width: var(--container-size);
+            height: var(--container-size);
+            z-index: 10;
+            box-sizing: border-box;
+        }
+
+        .grid-background {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: grid;
+            grid-template-columns: repeat(3, var(--tile-size));
+            grid-template-rows: repeat(3, var(--tile-size));
+            gap: var(--gap);
+            padding: var(--gap);
+            pointer-events: none;
+            box-sizing: border-box;
+        }
+
+        .grid-slot {
+            background-color: rgba(30, 41, 59, 0.3);
+            border-radius: 10px;
+            width: var(--tile-size);
+            height: var(--tile-size);
+        }
+
+        .tile {
+            position: absolute;
+            width: var(--tile-size);
+            height: var(--tile-size);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: var(--tile-color);
+            color: var(--text-color);
+            font-size: 2.5rem;
+            font-weight: 800;
+            border-radius: 10px;
+            cursor: default;
+            user-select: none;
+            transition: transform 0.2s cubic-bezier(0.2, 0, 0.2, 1), background-color 0.2s, box-shadow 0.2s;
+            box-shadow: 0 6px 0px #cbd5e1;
+            z-index: 2;
+        }
+
+        .tile.can-move {
+            cursor: pointer;
+        }
+
+        .tile.can-move:hover {
+            background-color: #fefefe;
+            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.1);
+            z-index: 20;
+        }
+
+        .tile.empty {
+            display: none;
+        }
+
+        .action-btn {
+            background: linear-gradient(135deg, #4f46e5, #6366f1);
+            color: white;
+            padding: 12px 40px;
+            border-radius: 16px;
+            font-weight: 800;
+            font-size: 1.1rem;
+            box-shadow: 0 8px 0px #3730a3, 0 15px 25px rgba(79, 70, 229, 0.3);
+            transition: all 0.1s ease;
+            position: relative;
+            z-index: 10;
+        }
+
+        .action-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 0px #3730a3, 0 20px 30px rgba(79, 70, 229, 0.4);
+        }
+
+        .action-btn:active {
+            transform: translateY(6px);
+            box-shadow: 0 2px 0px #3730a3;
+        }
+
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 23, 42, 0.7);
+            display: none;
+            align-items: center; justify-content: center;
+            z-index: 100; backdrop-filter: blur(8px);
+        }
+
+        .modal-content {
+            background: white; padding: 3rem; border-radius: 2rem;
+            text-align: center; max-width: 90%; width: 350px;
+            position: relative;
+        }
+
+        .stats-badge {
+            background: white;
+            padding: 0.5rem 1.25rem;
+            border-radius: 1rem;
+            border: 2px solid #f1f5f9;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.05);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-width: 100px;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- 煙火畫布 -->
+    <canvas id="fireworks-canvas"></canvas>
+
+    <div class="mb-8 text-center px-4 relative z-10">
+        <h1 class="text-5xl font-black text-slate-800 mb-3 tracking-tighter italic">Puzzle 15</h1>
+        <p class="text-slate-500 font-bold uppercase tracking-widest text-sm">點擊方塊即可進行移動</p>
+    </div>
+
+    <div class="puzzle-container" id="container">
+        <div class="grid-background">
+            <div class="grid-slot"></div><div class="grid-slot"></div><div class="grid-slot"></div>
+            <div class="grid-slot"></div><div class="grid-slot"></div><div class="grid-slot"></div>
+            <div class="grid-slot"></div><div class="grid-slot"></div><div class="grid-slot"></div>
+        </div>
+        <div id="game-board"></div>
+    </div>
+
+    <div class="mt-8 flex flex-col items-center gap-6 relative z-10">
+        <div class="flex gap-4">
+            <div class="stats-badge">
+                <span class="text-slate-400 font-bold uppercase text-[10px] tracking-widest">當前步數</span>
+                <span id="move-count" class="text-2xl font-black text-indigo-600">0</span>
+            </div>
+            <div class="stats-badge">
+                <span class="text-slate-400 font-bold uppercase text-[10px] tracking-widest">歷史最佳</span>
+                <span id="best-score" class="text-2xl font-black text-emerald-500">-</span>
+            </div>
+        </div>
+        <button id="reset-btn" class="action-btn">重新洗牌</button>
+    </div>
+
+    <div id="win-modal" class="modal-overlay">
+        <div class="modal-content">
+            <div class="text-7xl mb-6">🎉</div>
+            <h2 class="text-3xl font-black text-slate-800 mb-2">大成功！</h2>
+            <p class="text-slate-500 mb-2 font-medium">本次步數：<span id="final-moves" class="text-indigo-600 font-black">0</span></p>
+            <p id="new-record-msg" class="text-emerald-500 font-bold mb-8 hidden">🎊 恭喜打破個人紀錄！</p>
+            <button id="close-modal" class="w-full bg-slate-900 hover:bg-black text-white py-4 rounded-2xl font-black text-lg shadow-xl">再來一盤</button>
+        </div>
+    </div>
+
+    <script>
+        const boardElement = document.getElementById('game-board');
+        const moveDisplay = document.getElementById('move-count');
+        const bestScoreDisplay = document.getElementById('best-score');
+        const resetBtn = document.getElementById('reset-btn');
+        const winModal = document.getElementById('win-modal');
+        const closeModalBtn = document.getElementById('close-modal');
+        const finalMovesDisplay = document.getElementById('final-moves');
+        const newRecordMsg = document.getElementById('new-record-msg');
+        const canvas = document.getElementById('fireworks-canvas');
+        const ctx = canvas.getContext('2d');
+
+        const size = 3;
+        const tileSize = 90;
+        const gap = 12;
+        let tiles = []; 
+        let moves = 0;
+        let isAnimating = false;
+        let fireworksActive = false;
+        let fireworksTimer = null; 
+        let particles = [];
+
+        // 煙火粒子邏輯
+        class Particle {
+            constructor(x, y, color) {
+                this.x = x; this.y = y; this.color = color;
+                const angle = Math.random() * Math.PI * 2;
+                const force = Math.random() * 8 + 4;
+                this.velocity = { x: Math.cos(angle) * force, y: Math.sin(angle) * force };
+                this.alpha = 1; this.friction = 0.95; this.gravity = 0.18;
+                this.decay = Math.random() * 0.015 + 0.008; this.size = Math.random() * 4 + 1;
+            }
+            draw() {
+                ctx.save(); ctx.globalAlpha = this.alpha; ctx.beginPath();
+                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.fillStyle = this.color; ctx.shadowBlur = 15; ctx.shadowColor = this.color; ctx.fill(); ctx.restore();
+            }
+            update() {
+                this.velocity.x *= this.friction; this.velocity.y *= this.friction; this.velocity.y += this.gravity;
+                this.x += this.velocity.x; this.y += this.velocity.y; this.alpha -= this.decay;
+            }
+        }
+
+        function createFirework(x, y) {
+            const colors = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#ec4899', '#06b6d4'];
+            const color = colors[Math.floor(Math.random() * colors.length)];
+            for (let i = 0; i < 80; i++) particles.push(new Particle(x, y, color));
+        }
+
+        function animateFireworks() {
+            if (!fireworksActive && particles.length === 0) {
+                ctx.clearRect(0, 0, canvas.width, canvas.height); 
+                return;
+            }
+            requestAnimationFrame(animateFireworks);
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            if (fireworksActive && Math.random() < 0.12) {
+                createFirework(Math.random() * canvas.width, Math.random() * canvas.height * 0.4 + 100);
+            }
+            
+            for (let i = particles.length - 1; i >= 0; i--) {
+                const p = particles[i]; p.update(); p.draw();
+                if (p.alpha <= 0) particles.splice(i, 1);
+            }
+        }
+
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+
+        function loadBestScore() {
+            const best = localStorage.getItem('puzzle_best_score');
+            if (best) {
+                bestScoreDisplay.textContent = best;
+            } else {
+                bestScoreDisplay.textContent = '-';
+            }
+        }
+
+        function updateBestScore(currentMoves) {
+            const best = localStorage.getItem('puzzle_best_score');
+            if (!best || currentMoves < parseInt(best)) {
+                localStorage.setItem('puzzle_best_score', currentMoves);
+                bestScoreDisplay.textContent = currentMoves;
+                return true;
+            }
+            return false;
+        }
+
+        function initGame() {
+            moves = 0;
+            moveDisplay.textContent = moves;
+            boardElement.innerHTML = '';
+            fireworksActive = false;
+            if (fireworksTimer) clearTimeout(fireworksTimer);
+            particles = [];
+            newRecordMsg.classList.add('hidden');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            loadBestScore();
+
+            const numbers = [1, 2, 3, 4, 5, 6, 7, 8, null];
+            tiles = numbers.map((num) => {
+                const element = document.createElement('div');
+                element.className = 'tile' + (num === null ? ' empty' : '');
+                element.textContent = num || '';
+                if (num !== null) {
+                    element.onclick = () => {
+                        const idx = tiles.findIndex(t => t.element === element);
+                        handleTileClick(idx);
+                    };
+                }
+                boardElement.appendChild(element);
+                return { value: num, element: element };
+            });
+
+            shuffleTiles();
+            updateBoardView();
+        }
+
+        function shuffleTiles() {
+            let emptyIdx = tiles.findIndex(t => t.value === null);
+            for (let i = 0; i < 200; i++) {
+                const row = Math.floor(emptyIdx / size);
+                const col = emptyIdx % size;
+                const pos = [];
+                if (row > 0) pos.push(emptyIdx - size);
+                if (row < size - 1) pos.push(emptyIdx + size);
+                if (col > 0) pos.push(emptyIdx - 1);
+                if (col < size - 1) pos.push(emptyIdx + 1);
+                const next = pos[Math.floor(Math.random() * pos.length)];
+                [tiles[emptyIdx], tiles[next]] = [tiles[next], tiles[emptyIdx]];
+                emptyIdx = next;
+            }
+        }
+
+        function updateBoardView() {
+            const emptyIdx = tiles.findIndex(t => t.value === null);
+            const eR = Math.floor(emptyIdx / size);
+            const eC = emptyIdx % size;
+
+            tiles.forEach((tile, index) => {
+                const r = Math.floor(index / size);
+                const c = index % size;
+                const x = gap + (c * (tileSize + gap));
+                const y = gap + (r * (tileSize + gap));
+                tile.element.style.transform = `translate(${x}px, ${y}px)`;
+                if (tile.value !== null) {
+                    tile.element.classList.toggle('can-move', (r === eR || c === eC));
+                }
+            });
+        }
+
+        function handleTileClick(clickedIdx) {
+            if (isAnimating) return;
+            const emptyIdx = tiles.findIndex(t => t.value === null);
+            const cR = Math.floor(clickedIdx / size);
+            const cC = clickedIdx % size;
+            const eR = Math.floor(emptyIdx / size);
+            const eC = emptyIdx % size;
+
+            if (cR === eR || cC === eC) {
+                const movePath = [];
+                if (cR === eR) {
+                    const step = cC < eC ? 1 : -1;
+                    for (let c = eC; c !== cC; c -= step) movePath.push({ from: cR * size + (c - step), to: cR * size + c });
+                } else {
+                    const step = cR < eR ? 1 : -1;
+                    for (let r = eR; r !== cR; r -= step) movePath.push({ from: (r - step) * size + cC, to: r * size + cC });
+                }
+
+                if (movePath.length > 0) {
+                    isAnimating = true;
+                    movePath.forEach(path => { [tiles[path.to], tiles[path.from]] = [tiles[path.from], tiles[path.to]]; });
+                    moves++;
+                    moveDisplay.textContent = moves;
+                    updateBoardView();
+                    setTimeout(() => {
+                        isAnimating = false;
+                        checkWin();
+                    }, 210);
+                }
+            }
+        }
+
+        function checkWin() {
+            const winState = [1, 2, 3, 4, 5, 6, 7, 8, null];
+            if (tiles.every((tile, i) => tile.value === winState[i]) && moves > 0) {
+                finalMovesDisplay.textContent = moves;
+                const brokeRecord = updateBestScore(moves);
+                if (brokeRecord) {
+                    newRecordMsg.classList.remove('hidden');
+                }
+
+                fireworksActive = true;
+                animateFireworks();
+
+                if (fireworksTimer) clearTimeout(fireworksTimer);
+                fireworksTimer = setTimeout(() => {
+                    fireworksActive = false;
+                }, 5000); // 縮短為 5 秒
+
+                setTimeout(() => { winModal.style.display = 'flex'; }, 400);
+            }
+        }
+
+        resetBtn.onclick = initGame;
+        closeModalBtn.onclick = () => { winModal.style.display = 'none'; initGame(); };
+        window.onload = initGame;
+    </script>
+</body>
+</html>
