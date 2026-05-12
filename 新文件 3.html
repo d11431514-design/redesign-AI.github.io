@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouBike 視覺化即時地圖</title>
+    <!-- 引入 Google 字體、Lucide 圖標、與 Leaflet 地圖庫 -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        :root {
+            --primary: #f59e0b;
+            --primary-hover: #d97706;
+            --bg-gradient: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            --card-bg: #ffffff;
+            --text-main: #1e293b;
+            --text-sub: #64748b;
+            --shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+            background: var(--bg-gradient);
+            color: var(--text-main);
+            min-height: 100vh;
+            display: flex; flex-direction: column;
+        }
+
+        header { 
+            padding: 0.8rem; 
+            background: white; 
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            z-index: 1000;
+        }
+
+        .header-top {
+            display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin-bottom: 0.8rem;
+        }
+
+        .filter-bar {
+            display: flex; justify-content: center; align-items: center; gap: 1rem; flex-wrap: wrap;
+        }
+
+        h1 { font-size: 1.1rem; }
+
+        #district-select {
+            padding: 0.4rem 0.8rem;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            background: white;
+            font-family: inherit;
+            font-size: 0.9rem;
+            color: var(--text-main);
+            cursor: pointer;
+            outline: none;
+        }
+
+        #district-select:focus { border-color: var(--primary); }
+
+        #main-content {
+            display: flex; flex: 1; height: calc(100vh - 120px); overflow: hidden;
+        }
+
+        #sidebar {
+            width: 350px; overflow-y: auto; background: white; border-right: 1px solid #e2e8f0; padding: 1rem;
+        }
+
+        #map { flex: 1; background: #e5e7eb; position: relative; }
+
+        /* 使用者位置標記樣式 */
+        .user-location-marker {
+            background-color: #3b82f6; border: 3px solid white; border-radius: 50%;
+            box-shadow: 0 0 10px rgba(59, 130, 246, 0.8); position: relative;
+        }
+        
+        .user-location-marker::after {
+            content: ''; position: absolute; top: -3px; left: -3px; width: 24px; height: 24px;
+            border-radius: 50%; background: rgba(59, 130, 246, 0.4); animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+            0% { transform: scale(1); opacity: 0.8; }
+            100% { transform: scale(2.5); opacity: 0; }
+        }
+
+        .user-label {
+            background: #3b82f6; color: white; padding: 2px 8px; border-radius: 4px;
+            font-size: 12px; font-weight: bold; white-space: nowrap; border: 1px solid white;
+        }
+
+        .map-legend {
+            position: absolute; top: 10px; right: 10px; background: white; padding: 8px 12px;
+            border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); z-index: 1000;
+            font-size: 0.75rem; display: flex; flex-direction: column; gap: 5px; border: 1px solid #e2e8f0;
+        }
+        .legend-item { display: flex; align-items: center; gap: 8px; }
+        .dot { width: 12px; height: 12px; border-radius: 50%; display: inline-block; }
+
+        .refresh-btn {
+            background-color: var(--primary); color: white; border: none; padding: 0.4rem 0.8rem;
+            font-size: 0.8rem; font-weight: 500; border-radius: 9999px; cursor: pointer;
+            transition: all 0.3s ease; display: inline-flex; align-items: center; gap: 0.4rem;
+        }
+        .refresh-btn:hover { background-color: var(--primary-hover); }
+
+        .station-card {
+            background: var(--card-bg); border-radius: 0.75rem; padding: 0.8rem; margin-bottom: 0.8rem;
+            cursor: pointer; border: 2px solid #f1f5f9; transition: all 0.2s ease;
+        }
+        .station-card:hover { border-color: var(--primary); }
+        .station-card.active { border-color: var(--primary); background: #fffbeb; }
+
+        .station-info h3 { font-size: 0.95rem; margin-bottom: 0.2rem; color: #0f172a; }
+        .distance-tag {
+            font-size: 0.65rem; background: #e0f2fe; color: #0369a1; padding: 2px 6px; border-radius: 4px; margin-bottom: 0.4rem; display: inline-block;
+        }
+
+        .status-row { display: flex; gap: 0.3rem; }
+        .status-item {
+            flex: 1; text-align: center; padding: 0.4rem 0.1rem; border-radius: 0.4rem; font-size: 0.7rem;
+            display: flex; flex-direction: column; gap: 2px;
+        }
+        .status-avail { background: #fffbeb; color: #92400e; border: 1px solid #fde68a; }
+        .status-return { background: #f1f5f9; color: #334155; border: 1px solid #e2e8f0; }
+        .status-total { background: #f8fafc; color: #94a3b8; border: 1px solid #f1f5f9; }
+        .status-val { font-weight: 800; font-size: 0.95rem; }
+        .status-lbl { font-size: 0.6rem; opacity: 0.8; }
+
+        .meta-time { font-size: 0.65rem; color: var(--text-sub); margin-top: 0.4rem; text-align: right; }
+
+        @media (max-width: 768px) {
+            #main-content { flex-direction: column-reverse; }
+            #sidebar { width: 100%; height: 40%; }
+            #map { height: 60%; }
+        }
+
+        .loading-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9);
+            display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 2000;
+        }
+        .spinner { width: 40px; height: 40px; border: 4px solid #f3f4f6; border-left-color: var(--primary); border-radius: 50%; animation: spin 1s linear infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .bike-icon-label {
+            background-color: white; border: 2px solid #f59e0b; border-radius: 50%; color: #1e293b;
+            font-weight: 700; font-size: 11px; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2); transition: all 0.2s;
+        }
+        .bike-icon-label.low-stock { border-color: #ef4444; color: #ef4444; }
+        .bike-icon-label.empty { background-color: #94a3b8; border-color: #64748b; color: white; }
+        .bike-icon-label.full { border-color: #10b981; color: #059669; }
+    </style>
+</head>
+<body>
+
+<header>
+    <div class="header-top">
+        <h1><i data-lucide="map-pinned"></i> YouBike 即時視覺地圖</h1>
+    </div>
+    <div class="filter-bar">
+        <select id="district-select">
+            <option value="all">所有行政區 (顯示附近)</option>
+            <option value="大安區">大安區</option>
+            <option value="信義區">信義區</option>
+            <option value="中正區">中正區</option>
+            <option value="中山區">中山區</option>
+            <option value="萬華區">萬華區</option>
+            <option value="松山區">松山區</option>
+            <option value="內湖區">內湖區</option>
+            <option value="士林區">士林區</option>
+            <option value="北投區">北投區</option>
+            <option value="文山區">文山區</option>
+            <option value="南港區">南港區</option>
+            <option value="大同區">大同區</option>
+        </select>
+        <button id="refresh-btn" class="refresh-btn">
+            <i data-lucide="refresh-cw"></i> 重新定位刷新
+        </button>
+    </div>
+</header>
+
+<div id="main-content">
+    <div id="sidebar">
+        <div id="data-list">
+            <p style="text-align:center; padding:2rem; color:var(--text-sub);">正在嘗試定位您的位置...</p>
+        </div>
+    </div>
+    <div id="map">
+        <div class="map-legend">
+            <div class="legend-item"><span class="dot" style="background:#3b82f6; border:2px solid white;"></span> 您在此處</div>
+            <div class="legend-item"><span class="dot" style="background:#f59e0b; border:2px solid white;"></span> YouBike 站點</div>
+        </div>
+    </div>
+</div>
+
+<div id="loading-overlay" class="loading-overlay" style="display:none;">
+    <div class="spinner"></div>
+    <p id="loading-text" style="margin-top:1rem; font-weight:500;">定位中...</p>
+</div>
+
+<script>
+    lucide.createIcons();
+
+    let map;
+    let markersLayer = L.layerGroup();
+    let userLayer = L.layerGroup(); 
+    let userLocation = null;
+    let rawData = []; // 儲存原始 API 資料
+    
+    const dataList = document.getElementById('data-list');
+    const loadingOverlay = document.getElementById('loading-overlay');
+    const districtSelect = document.getElementById('district-select');
+
+    // 行政區中心座標資料庫 (Taipei Districts)
+    const districtCoords = {
+        "大安區": [25.0263, 121.5434],
+        "信義區": [25.0287, 121.5683],
+        "中正區": [25.0322, 121.5185],
+        "中山區": [25.0685, 121.5333],
+        "萬華區": [25.0354, 121.4997],
+        "松山區": [25.0599, 121.5591],
+        "內湖區": [25.0697, 121.5891],
+        "士林區": [25.0901, 121.5245],
+        "北投區": [25.1321, 121.4988],
+        "文山區": [24.9881, 121.5701],
+        "南港區": [25.0521, 121.6070],
+        "大同區": [25.0631, 121.5123]
+    };
+
+    const API_ENDPOINTS = [
+        'https://tcgbusfs.blob.core.windows.net/dotapp/youbike/v2/youbike_immediate.json',
+        'https://tcgbusfs.blob.core.windows.net/blobyoubike/youbike_immediate.json'
+    ];
+
+    function initMap() {
+        try {
+            map = L.map('map', { zoomControl: true }).setView([25.0478, 121.5171], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors'
+            }).addTo(map);
+            markersLayer.addTo(map);
+            userLayer.addTo(map); 
+        } catch (e) { console.error("地圖載入失敗:", e); }
+    }
+
+    function calculateDistance(lat1, lon1, lat2, lon2) {
+        if (!lat1 || !lon1 || !lat2 || !lon2) return 999;
+        const R = 6371;
+        const dLat = (lat2 - lat1) * Math.PI / 180;
+        const dLon = (lon2 - lon1) * Math.PI / 180;
+        const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+                  Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) *
+                  Math.sin(dLon/2) * Math.sin(dLon/2);
+        return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    }
+
+    async function fetchWithRetry() {
+        for (const url of API_ENDPOINTS) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 8000); 
+                const response = await fetch(url, { signal: controller.signal });
+                clearTimeout(timeoutId);
+                if (response.ok) {
+                    const data = await response.json();
+                    if (Array.isArray(data) && data.length > 0) return data;
+                }
+            } catch (e) { console.warn(`嘗試 API ${url} 失敗`); }
+        }
+        throw new Error('所有 API 來源皆無法連線');
+    }
+
+    async function startService() {
+        loadingOverlay.style.display = 'flex';
+        document.getElementById('loading-text').innerText = '正在定位您的位置...';
+
+        try {
+            const pos = await new Promise((resolve, reject) => {
+                navigator.geolocation.getCurrentPosition(resolve, reject, { timeout: 7000 });
+            });
+            userLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+            
+            userLayer.clearLayers();
+            const userIcon = L.divIcon({ className: 'user-location-marker', iconSize: [18, 18], iconAnchor: [9, 9] });
+            const labelIcon = L.divIcon({ html: `<div class="user-label">您在這裡</div>`, iconSize: [60, 20], iconAnchor: [30, 35], className: '' });
+            L.marker([userLocation.lat, userLocation.lng], { icon: userIcon }).addTo(userLayer);
+            L.marker([userLocation.lat, userLocation.lng], { icon: labelIcon }).addTo(userLayer);
+            
+            if (districtSelect.value === 'all') map.flyTo([userLocation.lat, userLocation.lng], 16);
+        } catch (err) {
+            userLocation = { lat: 25.0478, lng: 121.5171 };
+            if (districtSelect.value === 'all') map.flyTo([userLocation.lat, userLocation.lng], 14);
+        }
+
+        document.getElementById('loading-text').innerText = '正在擷取 YouBike 即時數據...';
+        try {
+            rawData = await fetchWithRetry();
+            applyFilter(); // 初始載入
+        } catch (error) {
+            dataList.innerHTML = `<div class="error-toast">資料讀取錯誤: ${error.message}</div>`;
+        } finally {
+            loadingOverlay.style.display = 'none';
+        }
+    }
+
+    // 處理下拉選單切換與資料過濾
+    function applyFilter() {
+        if (!rawData.length) return;
+
+        const district = districtSelect.value;
+        let filtered = rawData.map(s => ({
+            ...s,
+            lat: parseFloat(s.latitude || s.lat),
+            lng: parseFloat(s.longitude || s.lng),
+            distance: calculateDistance(userLocation.lat, userLocation.lng, parseFloat(s.latitude || s.lat), parseFloat(s.longitude || s.lng))
+        }));
+
+        if (district !== 'all') {
+            filtered = filtered.filter(s => s.sarea === district);
+            // 切換視角到該行政區
+            if (districtCoords[district]) {
+                map.flyTo(districtCoords[district], 15);
+            }
+        } else {
+            map.flyTo([userLocation.lat, userLocation.lng], 16);
+        }
+
+        const sidebarList = [...filtered].sort((a, b) => a.distance - b.distance).slice(0, 30);
+        renderUI(filtered, sidebarList);
+    }
+
+    function renderUI(mapData, sidebarData) {
+        markersLayer.clearLayers();
+        dataList.innerHTML = '';
+
+        if (sidebarData.length === 0) {
+            dataList.innerHTML = '<p style="text-align:center; padding:2rem; color:var(--text-sub);">此區域目前沒有資料</p>';
+        }
+
+        mapData.forEach(s => {
+            const avail = parseInt(s.available_rent_bikes || s.sbi) || 0;
+            const returnBikes = parseInt(s.available_return_bikes || s.bemp) || 0;
+            const sna = (s.sna || '').replace('YouBike2.0_', '');
+            
+            let statusClass = '';
+            if (avail === 0) statusClass = 'empty';
+            else if (avail <= 3) statusClass = 'low-stock';
+            else if (avail > 10) statusClass = 'full';
+
+            const icon = L.divIcon({
+                className: `bike-icon-label ${statusClass}`,
+                html: `<span>${avail}</span>`,
+                iconSize: [24, 24], iconAnchor: [12, 12]
+            });
+
+            L.marker([s.lat, s.lng], { icon: icon }).addTo(markersLayer).bindPopup(`
+                <div style="min-width: 170px;">
+                    <b style="font-size:1rem;">${sna}</b><br>
+                    <div style="margin-top:8px; display:flex; flex-direction:column; gap:4px;">
+                        <span>🚲 可借: <b>${avail}</b></span>
+                        <span>🅿️ 可還: <b>${returnBikes}</b></span>
+                    </div>
+                </div>
+            `);
+        });
+
+        sidebarData.forEach((s) => {
+            const sna = (s.sna || '').replace('YouBike2.0_', '');
+            const distStr = s.distance < 1 ? `${(s.distance * 1000).toFixed(0)}m` : `${s.distance.toFixed(1)}km`;
+            const avail = parseInt(s.available_rent_bikes || s.sbi) || 0;
+            const returnBikes = parseInt(s.available_return_bikes || s.bemp) || 0;
+            const total = parseInt(s.Quantity || s.quantity || s.tot) || 0;
+
+            const card = document.createElement('div');
+            card.className = 'station-card';
+            card.innerHTML = `
+                <span class="distance-tag">${s.sarea} • ${distStr}</span>
+                <div class="station-info"><h3>${sna}</h3></div>
+                <div class="status-row">
+                    <div class="status-item status-avail"><span class="status-val">${avail}</span><span class="status-lbl">可借</span></div>
+                    <div class="status-item status-return"><span class="status-val">${returnBikes}</span><span class="status-lbl">可還</span></div>
+                    <div class="status-item status-total"><span class="status-val">${total}</span><span class="status-lbl">總數</span></div>
+                </div>
+            `;
+            card.onclick = () => { map.flyTo([s.lat, s.lng], 18); };
+            dataList.appendChild(card);
+        });
+        lucide.createIcons();
+    }
+
+    districtSelect.addEventListener('change', applyFilter);
+    document.getElementById('refresh-btn').onclick = startService;
+    window.onload = () => { initMap(); startService(); };
+</script>
+</body>
+</html>

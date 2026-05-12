@@ -1,0 +1,561 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI 數位影像工作坊 - 專業旗艦版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            overflow: hidden;
+        }
+        .canvas-container {
+            background-image: 
+                linear-gradient(45deg, #1e293b 25%, transparent 25%), 
+                linear-gradient(-45deg, #1e293b 25%, transparent 25%), 
+                linear-gradient(45deg, transparent 75%, #1e293b 75%), 
+                linear-gradient(-45deg, transparent 75%, #1e293b 75%);
+            background-size: 20px 20px;
+            background-position: 0 0, 0 10px, 10px -10px, -10px 0px;
+        }
+        input[type="range"] { accent-color: #3b82f6; }
+        .tool-active { background-color: #3b82f6 !important; color: white !important; border-color: #60a5fa !important; }
+        #cropGuide {
+            border: 2px dashed white;
+            background: rgba(255, 255, 255, 0.1);
+            position: absolute;
+            pointer-events: none;
+            display: none;
+            z-index: 50;
+        }
+        #mainCanvas {
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+            border-radius: 0.5rem;
+            cursor: crosshair;
+        }
+        #mainCanvas.cursor-move { cursor: move; }
+        #mainCanvas.cursor-eyedropper { cursor: cell; }
+        aside::-webkit-scrollbar { width: 4px; }
+        aside::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+    </style>
+</head>
+<body class="h-screen flex flex-col md:flex-row">
+
+    <!-- 左側控制面板 -->
+    <aside class="w-full md:w-80 bg-slate-900 border-r border-slate-700 p-6 flex flex-col gap-5 z-10 overflow-y-auto">
+        <div>
+            <h1 class="text-2xl font-bold bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">
+                AI 影像工作坊 v8.0
+            </h1>
+            <p class="text-slate-400 text-[10px] mt-1 tracking-widest uppercase font-bold text-sky-500/80">互動式濾鏡與多重去背</p>
+        </div>
+
+        <!-- 檔案與主要動作 -->
+        <section class="flex flex-col gap-2">
+            <div class="flex gap-2">
+                <input type="file" id="imageUpload" accept="image/*" class="hidden">
+                <button onclick="document.getElementById('imageUpload').click()" class="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg text-sm font-semibold transition-all">
+                    上傳圖片
+                </button>
+                <button id="downloadBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 text-white py-2 rounded-lg text-sm border border-slate-600 transition-all">
+                    導出 PNG
+                </button>
+            </div>
+            <div class="flex gap-2">
+                <button id="undoBtn" class="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-1.5 rounded border border-slate-700 text-xs disabled:opacity-50" disabled>
+                    <i class="fas fa-undo mr-1"></i> 復原
+                </button>
+                <button id="resetBtn" class="flex-1 bg-red-900/30 hover:bg-red-900/50 text-red-400 py-1.5 rounded border border-red-800/50 text-xs">
+                    <i class="fas fa-trash-alt mr-1"></i> 重置全圖
+                </button>
+            </div>
+        </section>
+
+        <!-- 工具區 -->
+        <section class="flex flex-col gap-2">
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">互動工具 (點擊開啟/關閉)</label>
+            <div class="grid grid-cols-3 gap-2">
+                <button id="brushBtn" class="bg-slate-800 hover:bg-slate-700 p-2 rounded-lg flex flex-col items-center gap-1 border border-slate-700 transition-all">
+                    <i class="fas fa-th text-sm"></i><span class="text-[9px]">馬賽克</span>
+                </button>
+                <button id="cropBtn" class="bg-slate-800 hover:bg-slate-700 p-2 rounded-lg flex flex-col items-center gap-1 border border-slate-700 transition-all">
+                    <i class="fas fa-crop-alt text-sm"></i><span class="text-[9px]">裁切</span>
+                </button>
+                <button id="chromaBtn" class="bg-slate-800 hover:bg-slate-700 p-2 rounded-lg flex flex-col items-center gap-1 border border-slate-700 transition-all">
+                    <i class="fas fa-magic text-sm"></i><span class="text-[9px]">去背</span>
+                </button>
+            </div>
+        </section>
+
+        <!-- 去背控制 -->
+        <section id="chromaControls" class="hidden flex flex-col gap-3 bg-blue-900/10 p-3 rounded-lg border border-blue-900/30">
+            <div class="flex items-center justify-between">
+                <label class="text-[10px] font-bold text-blue-400 uppercase">累積去背</label>
+                <button id="toggleAccumulate" class="w-10 h-5 bg-slate-700 rounded-full relative transition-colors">
+                    <div id="toggleCircle" class="absolute left-1 top-1 w-3 h-3 bg-white rounded-full transition-all"></div>
+                </button>
+            </div>
+            <div class="flex justify-between text-[10px] mb-1"><span>容差</span><span id="tlVal">30</span></div>
+            <input type="range" id="toleranceSlider" min="5" max="150" value="30" class="w-full h-1 bg-slate-700 rounded-lg appearance-none">
+        </section>
+
+        <!-- 濾鏡效果 -->
+        <section class="flex flex-col gap-2">
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">濾鏡開關</label>
+            <div class="grid grid-cols-4 gap-1">
+                <button id="grayscaleBtn" class="bg-slate-800 hover:bg-slate-700 py-2 rounded border border-slate-700 text-[10px]">黑白</button>
+                <button id="sepiaBtn" class="bg-slate-800 hover:bg-slate-700 py-2 rounded border border-slate-700 text-[10px]">復古</button>
+                <button id="sharpenBtn" class="bg-slate-800 hover:bg-slate-700 py-2 rounded border border-slate-700 text-[10px]">銳化</button>
+                <button id="embossBtn" class="bg-slate-800 hover:bg-slate-700 py-2 rounded border border-slate-700 text-[10px]">浮雕</button>
+            </div>
+            <div class="grid grid-cols-2 gap-2 mt-1">
+                <button id="rotateBtn" class="bg-slate-800 hover:bg-slate-700 py-1.5 rounded border border-slate-700 text-[10px]">旋轉 90°</button>
+                <button id="flipBtn" class="bg-slate-800 hover:bg-slate-700 py-1.5 rounded border border-slate-700 text-[10px]">水平翻轉</button>
+            </div>
+        </section>
+
+        <!-- 滑桿控製 -->
+        <section class="flex flex-col gap-4">
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">細節調教</label>
+            <div class="space-y-4">
+                <div>
+                    <div class="flex justify-between text-[10px] mb-1"><span>模糊 (Blur)</span><span id="blVal">0</span></div>
+                    <input type="range" id="blurSlider" min="0" max="15" value="0" class="w-full h-1 bg-slate-700 rounded-lg appearance-none">
+                </div>
+                <div>
+                    <div class="flex justify-between text-[10px] mb-1"><span>冷暖 (Temp)</span><span id="tempVal">0</span></div>
+                    <input type="range" id="tempSlider" min="-100" max="100" value="0" class="w-full h-1 bg-slate-700 rounded-lg appearance-none">
+                </div>
+                <div class="grid grid-cols-2 gap-4">
+                    <div>
+                        <div class="flex justify-between text-[10px] mb-1"><span>亮度</span><span id="brVal">100</span></div>
+                        <input type="range" id="brightnessSlider" min="0" max="200" value="100" class="w-full h-1 bg-slate-700 rounded-lg appearance-none">
+                    </div>
+                    <div>
+                        <div class="flex justify-between text-[10px] mb-1"><span>對比</span><span id="ctVal">100</span></div>
+                        <input type="range" id="contrastSlider" min="0" max="200" value="100" class="w-full h-1 bg-slate-700 rounded-lg appearance-none">
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        <!-- 水印 -->
+        <section class="flex flex-col gap-2">
+            <label class="text-[10px] font-bold text-slate-500 uppercase tracking-widest">文字水印</label>
+            <div class="flex gap-1">
+                <input type="text" id="watermarkText" placeholder="輸入文字..." class="flex-1 bg-slate-800 border border-slate-700 rounded px-2 py-1 text-xs focus:outline-none focus:border-blue-500">
+                <button id="addWatermarkBtn" class="bg-indigo-600 hover:bg-indigo-500 px-3 py-1 rounded text-xs font-bold transition-all">添加</button>
+            </div>
+        </section>
+
+        <footer class="mt-auto pt-4 border-t border-slate-800">
+            <div class="bg-slate-800/50 p-3 rounded text-[10px] text-slate-400">
+                <i class="fas fa-mouse-pointer mr-1 text-blue-400"></i> 
+                <span id="hintText">上傳圖片即可開始</span>
+            </div>
+        </footer>
+    </aside>
+
+    <!-- 主畫布區 -->
+    <main class="flex-1 relative flex items-center justify-center p-4 canvas-container" id="canvasWrapper">
+        <div id="dropZone" class="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
+            <i class="fas fa-cloud-upload-alt text-5xl text-slate-800 mb-4"></i>
+            <p class="text-slate-600">拖曳圖片到這裡或使用左側按鈕</p>
+        </div>
+        <canvas id="mainCanvas" class="hidden"></canvas>
+        <div id="cropGuide"></div>
+    </main>
+
+    <script>
+        const canvas = document.getElementById('mainCanvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const upload = document.getElementById('imageUpload');
+        const hintText = document.getElementById('hintText');
+        const cropGuide = document.getElementById('cropGuide');
+        const undoBtn = document.getElementById('undoBtn');
+        const chromaControls = document.getElementById('chromaControls');
+
+        const sliders = {
+            brightness: document.getElementById('brightnessSlider'),
+            contrast: document.getElementById('contrastSlider'),
+            tolerance: document.getElementById('toleranceSlider'),
+            blur: document.getElementById('blurSlider'),
+            temp: document.getElementById('tempSlider')
+        };
+
+        const values = {
+            br: document.getElementById('brVal'),
+            ct: document.getElementById('ctVal'),
+            tl: document.getElementById('tlVal'),
+            bl: document.getElementById('blVal'),
+            temp: document.getElementById('tempVal')
+        };
+
+        let baseImage = null; 
+        let originalImageFile = null;
+        let historyStack = []; 
+        let currentMode = 'none';
+        let isDrawing = false;
+        let cropStart = { x: 0, y: 0, sx: 0, sy: 0 };
+        
+        let floatingText = null; 
+        let isDraggingText = false;
+        
+        let isAccumulating = false; 
+
+        // 濾鏡狀態
+        const filterState = {
+            grayscale: false,
+            sepia: false,
+            sharpen: false,
+            emboss: false
+        };
+        // 專門存儲矩陣運算前的備份以便「取消」
+        let preMatrixBase = null;
+
+        // 1. 初始化圖片
+        upload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            originalImageFile = file;
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    baseImage = img;
+                    historyStack = [];
+                    updateUndoButton();
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    canvas.classList.remove('hidden');
+                    document.getElementById('dropZone').classList.add('hidden');
+                    resetFilters();
+                    setMode('none');
+                    redraw();
+                };
+                img.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        });
+
+        // 2. 重繪核心
+        function redraw() {
+            if (!baseImage) return;
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            const tempVal = parseInt(sliders.temp.value);
+            let overlayColor = "transparent";
+            if(tempVal > 0) overlayColor = `rgba(255, 140, 0, ${tempVal/450})`; 
+            else if(tempVal < 0) overlayColor = `rgba(0, 80, 255, ${Math.abs(tempVal)/450})`; 
+
+            ctx.filter = `
+                brightness(${sliders.brightness.value}%) 
+                contrast(${sliders.contrast.value}%) 
+                blur(${sliders.blur.value}px)
+                grayscale(${filterState.grayscale ? 100 : 0}%)
+                sepia(${filterState.sepia ? 100 : 0}%)
+            `;
+            
+            ctx.drawImage(baseImage, 0, 0);
+            
+            if(tempVal !== 0) {
+                ctx.globalCompositeOperation = 'overlay';
+                ctx.fillStyle = overlayColor;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.globalCompositeOperation = 'source-over';
+            }
+
+            ctx.filter = 'none';
+            if (floatingText) {
+                ctx.save();
+                ctx.font = `bold ${floatingText.size}px Arial`;
+                ctx.fillStyle = "rgba(255, 255, 255, 0.7)";
+                ctx.textAlign = "center"; ctx.textBaseline = "middle";
+                ctx.fillText(floatingText.text, floatingText.x, floatingText.y);
+                if (currentMode === 'textMove') {
+                    ctx.strokeStyle = "#3b82f6"; ctx.setLineDash([5, 5]);
+                    const m = ctx.measureText(floatingText.text);
+                    ctx.strokeRect(floatingText.x - m.width/2 - 10, floatingText.y - floatingText.size/2 - 5, m.width + 20, floatingText.size + 10);
+                }
+                ctx.restore();
+            }
+        }
+
+        // 3. 濾鏡邏輯 (帶開關功能)
+        function toggleFilter(type) {
+            if (!baseImage) return;
+            
+            // 如果是 CSS 濾鏡類 (黑白, 復古)
+            if (type === 'grayscale' || type === 'sepia') {
+                filterState[type] = !filterState[type];
+                document.getElementById(`${type}Btn`).classList.toggle('tool-active', filterState[type]);
+                redraw();
+                return;
+            }
+
+            // 如果是像素運算類 (銳化, 浮雕)
+            if (type === 'sharpen' || type === 'emboss') {
+                if (filterState[type]) {
+                    // 取消：回到備份狀態
+                    if (preMatrixBase) {
+                        baseImage = preMatrixBase;
+                        filterState[type] = false;
+                        document.getElementById(`${type}Btn`).classList.remove('tool-active');
+                        redraw();
+                    }
+                } else {
+                    // 套用：先關閉另一個矩陣濾鏡
+                    const other = type === 'sharpen' ? 'emboss' : 'sharpen';
+                    if (filterState[other]) {
+                        filterState[other] = false;
+                        document.getElementById(`${other}Btn`).classList.remove('tool-active');
+                    }
+                    
+                    preMatrixBase = baseImage; // 備份當前 base
+                    const matrices = {
+                        sharpen: [ 0, -1, 0, -1, 5, -1, 0, -1, 0 ],
+                        emboss: [ -2, -1, 0, -1, 1, 1, 0, 1, 2 ]
+                    };
+                    applyConvolution(matrices[type]);
+                    filterState[type] = true;
+                    document.getElementById(`${type}Btn`).classList.add('tool-active');
+                }
+            }
+        }
+
+        function applyConvolution(matrix) {
+            saveHistory();
+            const side = 3, halfSide = 1;
+            const srcData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const src = srcData.data, sw = srcData.width, sh = srcData.height;
+            const output = ctx.createImageData(sw, sh), dst = output.data;
+
+            for (let y=0; y<sh; y++) {
+                for (let x=0; x<sw; x++) {
+                    const dstOff = (y*sw+x)*4;
+                    let r=0, g=0, b=0;
+                    for (let cy=0; cy<side; cy++) {
+                        for (let cx=0; cx<side; cx++) {
+                            const scy = Math.min(sh-1, Math.max(0, y + cy - halfSide));
+                            const scx = Math.min(sw-1, Math.max(0, x + cx - halfSide));
+                            const srcOff = (scy*sw+scx)*4;
+                            const wt = matrix[cy*side+cx];
+                            r += src[srcOff] * wt; g += src[srcOff+1] * wt; b += src[srcOff+2] * wt;
+                        }
+                    }
+                    dst[dstOff] = r; dst[dstOff+1] = g; dst[dstOff+2] = b; dst[dstOff+3] = src[dstOff+3];
+                }
+            }
+            ctx.putImageData(output, 0, 0);
+            updateBaseFromCanvas();
+        }
+
+        // 4. 基礎功能
+        function setMode(mode) {
+            if (currentMode === mode) currentMode = 'none';
+            else {
+                if (floatingText && mode !== 'textMove') finalizeText();
+                currentMode = mode;
+            }
+            document.querySelectorAll('aside button').forEach(b => b.classList.remove('tool-active'));
+            chromaControls.classList.add('hidden');
+            
+            if (currentMode === 'chroma') {
+                chromaControls.classList.remove('hidden');
+                canvas.classList.add('cursor-eyedropper');
+            } else if (currentMode === 'textMove') {
+                canvas.classList.add('cursor-move');
+            } else {
+                canvas.classList.remove('cursor-eyedropper', 'cursor-move');
+            }
+            
+            const btn = document.getElementById(`${currentMode}Btn`);
+            if (btn) btn.classList.add('tool-active');
+            
+            // 同步已啟動的濾鏡按鈕顏色
+            Object.keys(filterState).forEach(k => {
+                if(filterState[k]) document.getElementById(`${k}Btn`).classList.add('tool-active');
+            });
+
+            updateHint();
+            redraw();
+        }
+
+        function updateHint() {
+            const hints = { brush: '塗抹馬賽克', crop: '拖曳框選裁切', chroma: '點擊顏色去背', textMove: '移動水印' };
+            hintText.innerText = hints[currentMode] || '選取工具或濾鏡';
+        }
+
+        function saveHistory() {
+            historyStack.push(canvas.toDataURL());
+            if (historyStack.length > 15) historyStack.shift();
+            updateUndoButton();
+        }
+
+        function updateUndoButton() { undoBtn.disabled = historyStack.length === 0; }
+
+        function undo() {
+            if (historyStack.length === 0) return;
+            const last = historyStack.pop();
+            const img = new Image();
+            img.onload = () => { baseImage = img; redraw(); updateUndoButton(); };
+            img.src = last;
+        }
+
+        function updateBaseFromCanvas() {
+            const img = new Image(); img.src = canvas.toDataURL();
+            img.onload = () => { baseImage = img; };
+        }
+
+        function finalizeText() {
+            if (!floatingText) return;
+            saveHistory(); redraw(); updateBaseFromCanvas();
+            floatingText = null; setMode('none');
+        }
+
+        // 5. 事件綁定
+        document.getElementById('grayscaleBtn').addEventListener('click', () => toggleFilter('grayscale'));
+        document.getElementById('sepiaBtn').addEventListener('click', () => toggleFilter('sepia'));
+        document.getElementById('sharpenBtn').addEventListener('click', () => toggleFilter('sharpen'));
+        document.getElementById('embossBtn').addEventListener('click', () => toggleFilter('emboss'));
+        document.getElementById('brushBtn').addEventListener('click', () => setMode('brush'));
+        document.getElementById('cropBtn').addEventListener('click', () => setMode('crop'));
+        document.getElementById('chromaBtn').addEventListener('click', () => setMode('chroma'));
+        document.getElementById('undoBtn').addEventListener('click', undo);
+        document.getElementById('resetBtn').addEventListener('click', () => { if(originalImageFile) upload.dispatchEvent(new Event('change')); });
+        
+        document.getElementById('toggleAccumulate').addEventListener('click', () => {
+            isAccumulating = !isAccumulating;
+            document.getElementById('toggleAccumulate').classList.toggle('bg-blue-600', isAccumulating);
+            document.getElementById('toggleCircle').style.left = isAccumulating ? '1.5rem' : '0.25rem';
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            if (!baseImage) return;
+            const r = canvas.getBoundingClientRect();
+            const x = (e.clientX - r.left) * (canvas.width / r.width);
+            const y = (e.clientY - r.top) * (canvas.height / r.height);
+
+            if (currentMode === 'chroma') {
+                saveHistory();
+                const pixel = ctx.getImageData(x, y, 1, 1).data;
+                const tol = parseInt(sliders.tolerance.value);
+                const id = ctx.getImageData(0, 0, canvas.width, canvas.height), d = id.data;
+                for (let i=0; i<d.length; i+=4) {
+                    const diff = Math.sqrt((d[i]-pixel[0])**2 + (d[i+1]-pixel[1])**2 + (d[i+2]-pixel[2])**2);
+                    if (diff < tol) d[i+3] = 0;
+                }
+                ctx.putImageData(id, 0, 0); updateBaseFromCanvas(); return;
+            }
+
+            if (floatingText) {
+                const m = ctx.measureText(floatingText.text);
+                if (x > floatingText.x - m.width/2 - 10 && x < floatingText.x + m.width/2 + 10 &&
+                    y > floatingText.y - floatingText.size/2 - 10 && y < floatingText.y + floatingText.size/2 + 10) {
+                    isDraggingText = true; return;
+                }
+            }
+
+            if (currentMode === 'brush') { isDrawing = true; saveHistory(); applyBrush(x, y); }
+            else if (currentMode === 'crop') { isDrawing = true; cropStart = { x, y, sx: e.clientX, sy: e.clientY }; cropGuide.style.display = 'block'; }
+        });
+
+        window.addEventListener('mousemove', (e) => {
+            const r = canvas.getBoundingClientRect();
+            const x = (e.clientX - r.left) * (canvas.width / r.width);
+            const y = (e.clientY - r.top) * (canvas.height / r.height);
+
+            if (isDraggingText && floatingText) { floatingText.x = x; floatingText.y = y; redraw(); return; }
+            if (!isDrawing) return;
+
+            if (currentMode === 'brush') applyBrush(x, y);
+            else if (currentMode === 'crop') {
+                const w = e.clientX - cropStart.sx, h = e.clientY - cropStart.sy;
+                cropGuide.style.width = Math.abs(w) + 'px'; cropGuide.style.height = Math.abs(h) + 'px';
+                cropGuide.style.left = (w > 0 ? cropStart.sx : e.clientX) + 'px';
+                cropGuide.style.top = (h > 0 ? cropStart.sy : e.clientY) + 'px';
+            }
+        });
+
+        window.addEventListener('mouseup', () => {
+            isDraggingText = false;
+            if (isDrawing) {
+                if (currentMode === 'brush') updateBaseFromCanvas();
+                if (currentMode === 'crop') {
+                    const r = canvas.getBoundingClientRect(), gr = cropGuide.getBoundingClientRect();
+                    const x = (gr.left - r.left) * (canvas.width/r.width), y = (gr.top - r.top) * (canvas.height/r.height);
+                    const w = gr.width * (canvas.width/r.width), h = gr.height * (canvas.height/r.height);
+                    if (w > 5 && h > 5) {
+                        saveHistory();
+                        const data = ctx.getImageData(x, y, w, h);
+                        canvas.width = w; canvas.height = h; ctx.putImageData(data, 0, 0); updateBaseFromCanvas();
+                    }
+                }
+                isDrawing = false; cropGuide.style.display = 'none'; setMode('none');
+            }
+        });
+
+        function applyBrush(cx, cy) {
+            const s = 40, m = 10;
+            const sx = Math.max(0, cx - s/2), sy = Math.max(0, cy - s/2);
+            const id = ctx.getImageData(sx, sy, s, s), d = id.data;
+            for(let i=0; i<d.length; i+=m*4) {
+                for(let j=0; j<m*4; j+=4) {
+                    if(i+j < d.length) { d[i+j]=d[i]; d[i+j+1]=d[i+1]; d[i+j+2]=d[i+2]; }
+                }
+            }
+            ctx.putImageData(id, sx, sy);
+        }
+
+        document.getElementById('addWatermarkBtn').addEventListener('click', () => {
+            const t = document.getElementById('watermarkText').value;
+            if(!t) return;
+            finalizeText();
+            floatingText = { text: t, x: canvas.width/2, y: canvas.height/2, size: canvas.width/10 };
+            setMode('textMove');
+        });
+
+        document.getElementById('rotateBtn').addEventListener('click', () => {
+            saveHistory();
+            const t = document.createElement('canvas'); t.width = canvas.height; t.height = canvas.width;
+            const tc = t.getContext('2d'); tc.translate(t.width/2, t.height/2); tc.rotate(Math.PI/2);
+            tc.drawImage(baseImage, -canvas.width/2, -canvas.height/2);
+            canvas.width = t.width; canvas.height = t.height;
+            const img = new Image(); img.onload = () => { baseImage = img; redraw(); }; img.src = t.toDataURL();
+        });
+
+        document.getElementById('flipBtn').addEventListener('click', () => {
+            saveHistory();
+            const t = document.createElement('canvas'); t.width = canvas.width; t.height = canvas.height;
+            const tc = t.getContext('2d'); tc.scale(-1, 1); tc.drawImage(baseImage, -canvas.width, 0);
+            const img = new Image(); img.onload = () => { baseImage = img; redraw(); }; img.src = t.toDataURL();
+        });
+
+        document.getElementById('downloadBtn').addEventListener('click', () => {
+            const l = document.createElement('a'); l.download = 'AI_Workshop_Edit.png'; l.href = canvas.toDataURL(); l.click();
+        });
+
+        Object.keys(sliders).forEach(k => sliders[k].addEventListener('input', () => {
+            Object.keys(values).forEach(v => {
+                if(values[v] && sliders[k].id.includes(k)) values[v].innerText = sliders[k].value;
+            });
+            values.br.innerText = sliders.brightness.value;
+            values.ct.innerText = sliders.contrast.value;
+            values.tl.innerText = sliders.tolerance.value;
+            values.bl.innerText = sliders.blur.value;
+            values.temp.innerText = sliders.temp.value;
+            redraw();
+        }));
+
+        function resetFilters() {
+            Object.values(sliders).forEach(s => s.value = s.id.includes('brightness') || s.id.includes('contrast') ? 100 : s.id.includes('tolerance') ? 30 : 0);
+            Object.keys(filterState).forEach(k => filterState[k] = false);
+            document.querySelectorAll('aside button').forEach(b => b.classList.remove('tool-active'));
+            preMatrixBase = null;
+        }
+    </script>
+</body>
+</html>
